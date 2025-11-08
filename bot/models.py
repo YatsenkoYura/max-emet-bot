@@ -3,7 +3,9 @@ from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 import enum
 
+
 Base = declarative_base()
+
 
 class NewsCategory(str, enum.Enum):
     CLIMATE = "climate"
@@ -18,10 +20,12 @@ class NewsCategory(str, enum.Enum):
     SPORTS = "sports"
     TRAVEL = "travel"
 
+
 class ReactionType(str, enum.Enum):
     LIKE = "like"
     DISLIKE = "dislike"
     SKIP = "skip"
+
 
 class User(Base):
     __tablename__ = "users"
@@ -35,15 +39,36 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     last_active = Column(DateTime, default=datetime.utcnow)
     
-    category_weights = relationship("UserCategoryWeight", back_populates="user", cascade="all, delete-orphan")
-    interactions = relationship("UserInteraction", back_populates="user", cascade="all, delete-orphan")
-    stats = relationship("UserStats", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    category_weights = relationship(
+        "UserCategoryWeight", 
+        back_populates="user", 
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
+    interactions = relationship(
+        "UserInteraction", 
+        back_populates="user", 
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
+    stats = relationship(
+        "UserStats", 
+        back_populates="user", 
+        uselist=False, 
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
+
 
 class UserCategoryWeight(Base):
     __tablename__ = "user_category_weights"
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(
+        Integer, 
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
+    )
     category = Column(Enum(NewsCategory), nullable=False)
     
     weight = Column(Float, default=0.5)
@@ -62,6 +87,7 @@ class UserCategoryWeight(Base):
     __table_args__ = (
         UniqueConstraint('user_id', 'category', name='unique_user_category'),
     )
+
 
 class News(Base):
     __tablename__ = "news"
@@ -82,14 +108,28 @@ class News(Base):
     
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    interactions = relationship("UserInteraction", back_populates="news", cascade="all, delete-orphan")
+    interactions = relationship(
+        "UserInteraction", 
+        back_populates="news", 
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
+
 
 class UserInteraction(Base):
     __tablename__ = "user_interactions"
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    news_id = Column(Integer, ForeignKey("news.id"), nullable=True)
+    user_id = Column(
+        Integer, 
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    news_id = Column(
+        Integer, 
+        ForeignKey("news.id", ondelete="SET NULL"),
+        nullable=True
+    )
     news_title = Column(String(300))
     category = Column(Enum(NewsCategory), nullable=False)
     category_confidence = Column(Float)
@@ -103,11 +143,17 @@ class UserInteraction(Base):
     user = relationship("User", back_populates="interactions")
     news = relationship("News", back_populates="interactions")
 
+
 class UserStats(Base):
     __tablename__ = "user_stats"
     
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
+    user_id = Column(
+        Integer, 
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, 
+        unique=True
+    )
     
     total_news_shown = Column(Integer, default=0)
     total_reactions = Column(Integer, default=0)

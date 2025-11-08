@@ -11,9 +11,10 @@ async def main():
     """Главная функция запуска бота."""
     bot = Bot(token=os.getenv("TOKEN"))
     dp = Dispatcher()
-    regHandler = RegHandler(bot=bot, dp=dp)
-    regHandler.register_handler()
     session = get_session()
+
+    regHandler = RegHandler(bot=bot, dp=dp, db_session=session)
+    regHandler.register_handler()
     
     
     await dp.start_polling(bot)
