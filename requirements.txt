@@ -5,6 +5,8 @@ aiosignal==1.4.0
 alembic==1.17.1
 annotated-types==0.7.0
 attrs==25.4.0
+fasttext-numpy2==0.10.4
+feedparser==6.0.12
 frozenlist==1.8.0
 greenlet==3.2.4
 idna==3.11
@@ -21,6 +23,7 @@ pybind11==3.0.1
 pydantic==2.12.4
 pydantic_core==2.41.5
 setuptools==80.9.0
+sgmllib3k==1.0.0
 SQLAlchemy==2.0.44
 typing-inspection==0.4.2
 typing_extensions==4.15.0

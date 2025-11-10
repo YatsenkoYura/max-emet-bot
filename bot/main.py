@@ -2,7 +2,8 @@ import asyncio
 import logging
 from maxapi import Bot, Dispatcher
 from db import get_session
-from regHandler import RegHandler
+from handlers.regHandler import RegHandler
+from handlers.parseHandler import ParseHandler
 import os
 
 logging.basicConfig(level=logging.INFO)
@@ -12,10 +13,9 @@ async def main():
     bot = Bot(token=os.getenv("TOKEN"))
     dp = Dispatcher()
     session = get_session()
-
-    regHandler = RegHandler(bot=bot, dp=dp, db_session=session)
-    regHandler.register_handler()
-    
+    ParseHandler(bot, dp, session)
+    reg_handler = RegHandler(bot=bot, dp=dp, db_session=session)
+    reg_handler.register_handler()
     
     await dp.start_polling(bot)
 

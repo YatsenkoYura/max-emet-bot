@@ -1,11 +1,10 @@
 from maxapi import Dispatcher, Bot
 from maxapi.types import BotStarted, MessageCallback, MessageCreated
 from maxapi.utils.inline_keyboard import InlineKeyboardBuilder
-from maxapi.types import CallbackButton
+from maxapi.types import CallbackButton, Command
 from sqlalchemy.orm import Session
-from models import User, UserStats, NewsCategory, UserCategoryWeight
+from models import User, UserStats, NewsCategory, UserCategoryWeight, News
 from datetime import datetime
-
 
 user_states = {}
 
@@ -39,7 +38,7 @@ def create_default_category_weights(user_id: int, selected_categories: list = No
     return weights
 
 
-class RegHandler():
+class RegHandler:
     def __init__(self, bot: Bot, dp: Dispatcher, db_session: Session):
         self.bot = bot
         self.dp = dp
@@ -253,7 +252,7 @@ class RegHandler():
             attachments=[builder.as_markup()]
         )
 
-
+    
     async def save_user_to_db(self, chat_id: int):
         """Сохраняет нового пользователя в БД"""
         user_info = self.user_add_info[chat_id]
