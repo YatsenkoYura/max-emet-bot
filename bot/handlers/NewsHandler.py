@@ -7,14 +7,17 @@ from models import User, News, ReactionType
 from utils.recomendation import get_recommended_news, process_user_reaction
 from typing import Optional
 import logging
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
 
 class NewsManager:
     def __init__(self, bot, db_session: Session):
         self.bot = bot
         self.db_session = db_session
         self.user_news_cache = {}
+        self.user_score_cache_time = {}
         self.router = Router()
         self.register_handlers()
 
@@ -30,7 +33,7 @@ class NewsManager:
             return
         text = event.message.body.text
         if not text or text.strip() != "/news":
-            return  # Пропускаем
+            return
         chat_id = event.get_ids()[0]
         user_id = event.message.sender.user_id
         user = self.db_session.query(User).filter(User.max_id == str(user_id)).first()
@@ -52,7 +55,6 @@ class NewsManager:
         await self.load_and_show_news(chat_id, user)
         await callback.answer()
 
-
     async def handle_news_prev(self, callback: MessageCallback):
         chat_id = callback.chat.chat_id
         user_id = callback.callback.user.user_id
@@ -63,7 +65,6 @@ class NewsManager:
         await self.navigate_news(chat_id, user, callback.message, direction=-1)
         await callback.answer()
 
-
     async def handle_news_next(self, callback: MessageCallback):
         chat_id = callback.chat.chat_id
         user_id = callback.callback.user.user_id
@@ -73,7 +74,6 @@ class NewsManager:
             return
         await self.navigate_news(chat_id, user, callback.message, direction=1)
         await callback.answer()
-
 
     async def handle_reaction(self, callback: MessageCallback):
         chat_id = callback.chat.chat_id
@@ -86,9 +86,16 @@ class NewsManager:
         await self.process_reaction(chat_id, user, callback.message, reaction_type)
         await callback.answer()
 
-
     async def load_and_show_news(self, chat_id: int, user: User, count: int = 10):
-        news_list = get_recommended_news(user=user, n=count, session=self.db_session, diversity_factor=0.2, freshness_hours=72)
+        # Кэшируем рекомендации, пересчитываем не чаще раза в 30 минут
+        last_calc = self.user_score_cache_time.get(user.id)
+        now = datetime.utcnow()
+        if not last_calc or (now - last_calc) > timedelta(minutes=30):
+            from utils.recomendation import precompute_scores_for_user
+            precompute_scores_for_user(user, self.db_session)
+            self.user_score_cache_time[user.id] = now
+
+        news_list = get_recommended_news(user=user, n=count, session=self.db_session, diversity_factor=0.2)
         if not news_list:
             await self.bot.send_message(chat_id, "😔 К сожалению, новых новостей для вас пока нет.")
             return
@@ -115,8 +122,11 @@ class NewsManager:
             await self.bot.send_message(chat_id, text=text, attachments=[keyboard])
 
     def format_news_message(self, news: News, current: int, total: int) -> str:
-        emoji_map = {"climate": "🌍", "conflicts": "⚔️", "culture": "🎭", "economy": "💰", "gloss": "🙂", "health": "🏥",
-                     "politics": "🏛️", "science": "🔬", "society": "👥", "sports": "⚽", "travel": "✈️"}
+        emoji_map = {
+            "climate": "🌍", "conflicts": "⚔️", "culture": "🎭", "economy": "💰",
+            "gloss": "🙂", "health": "🏥", "politics": "🏛️", "science": "🔬",
+            "society": "👥", "sports": "⚽", "travel": "✈️"
+        }
         emoji = emoji_map.get(news.category.value, "📰")
         content = news.content[:800] + "..." if len(news.content) > 800 else news.content
         text = f"{emoji} *{news.title}*\n\n{content}\n\n"
@@ -156,7 +166,11 @@ class NewsManager:
             return
         current_index = cache['current_index']
         news = cache['news'][current_index]
-        reaction_map = {'like': ReactionType.LIKE, 'dislike': ReactionType.DISLIKE, 'skip': ReactionType.SKIP}
+        reaction_map = {
+            'like': ReactionType.LIKE,
+            'dislike': ReactionType.DISLIKE,
+            'skip': ReactionType.SKIP
+        }
         reaction = reaction_map.get(reaction_str)
         if not reaction:
             return

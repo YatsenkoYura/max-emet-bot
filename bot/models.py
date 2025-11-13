@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean, Enum, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean, Enum, ForeignKey, UniqueConstraint, Index
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 import enum
@@ -31,7 +31,7 @@ class User(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True)
-    max_id = Column(String(50), unique=True, nullable=False)
+    max_id = Column(String(50), unique=True, nullable=False, index=True)
     username = Column(String(100))
     gender = Column(String(10), nullable=True)
     age = Column(Integer, nullable=True)
@@ -57,6 +57,10 @@ class User(Base):
         uselist=False, 
         cascade="all, delete-orphan",
         passive_deletes=True
+    )
+
+    __table_args__ = (
+        Index('idx_user_last_active', 'last_active'),
     )
 
 
@@ -88,6 +92,11 @@ class UserCategoryWeight(Base):
         UniqueConstraint('user_id', 'category', name='unique_user_category'),
     )
 
+    __table_args__ = (
+        UniqueConstraint('user_id', 'category', name='unique_user_category'),
+        Index('idx_category_weight_user', 'user_id'),
+    )
+
 
 class News(Base):
     __tablename__ = "news"
@@ -113,6 +122,11 @@ class News(Base):
         back_populates="news", 
         cascade="all, delete-orphan",
         passive_deletes=True
+    )
+
+    __table_args__ = (
+        Index('idx_news_category_created', 'category', 'created_at'),
+        Index('idx_news_created_at', 'created_at'),
     )
 
 
@@ -143,6 +157,11 @@ class UserInteraction(Base):
     user = relationship("User", back_populates="interactions")
     news = relationship("News", back_populates="interactions")
 
+    __table_args__ = (
+        Index('idx_interaction_user_news', 'user_id', 'news_id'),
+        Index('idx_interaction_user_shown', 'user_id', 'shown_at'),
+    )
+
 
 class UserStats(Base):
     __tablename__ = "user_stats"
@@ -171,3 +190,28 @@ class UserStats(Base):
     last_updated = Column(DateTime, default=datetime.utcnow)
     
     user = relationship("User", back_populates="stats")
+
+class UserNewsScore(Base):
+    __tablename__ = "user_news_scores"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(
+        Integer, 
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    news_id = Column(
+        Integer, 
+        ForeignKey("news.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    
+    score = Column(Float, nullable=False, index=True)
+    calculated_at = Column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'news_id', name='unique_user_news_score'),
+        Index('idx_user_score', 'user_id', 'score'),
+    )

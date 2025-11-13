@@ -1,5 +1,4 @@
 import fasttext
-import numpy as np
 import re
 from typing import Tuple, Optional, List, Dict
 from datetime import datetime, timedelta
@@ -23,7 +22,6 @@ class NewsClassifier:
         """
         self.model = fasttext.load_model(model_path)
 
-        # Маппинг меток fastText на ваши категории
         self.label_mapping = {
             '__label__climate': 'CLIMATE',
             '__label__conflicts': 'CONFLICTS',
@@ -61,7 +59,6 @@ class NewsClassifier:
         return category, top_probability
 
 
-# ==================== УТИЛИТЫ ====================
 
 def clean_html(html_text: str) -> str:
     """Удаляет HTML теги и декодирует HTML сущности"""
@@ -133,14 +130,21 @@ def parse_rss_and_populate_db(
     session: Session,
     News,
     NewsCategory,
-    classifier: NewsClassifier,
+    classifier: Optional[NewsClassifier] = None,
     hours_filter: int = 1,
-    limit: int = None
+    limit: Optional[int] = None,
+    fixed_category: Optional[str] = None,
+    skip_classification: bool = False
 ) -> List[Dict]:
     """
-    Универсальный парсер RSS с автоматической классификацией
+    Универсальный парсер RSS с опциональной классификацией
     Парсит только новости за последние N часов
     Извлекает максимум текста из самого RSS (без парсинга HTML)
+    
+    Оптимизации:
+    - Батчевая вставка через bulk_insert_mappings
+    - Предварительная проверка существующих новостей одним запросом
+    - Опциональная классификация через fixed_category
 
     Args:
         rss_url: URL RSS фида
@@ -148,20 +152,24 @@ def parse_rss_and_populate_db(
         session: SQLAlchemy session
         News: ORM модель News
         NewsCategory: Enum категорий
-        classifier: Объект NewsClassifier для классификации
+        classifier: Объект NewsClassifier для классификации (опционально)
         hours_filter: Парсить новости за последние N часов (по умолчанию 1)
         limit: Максимальное количество записей
+        fixed_category: Если указана, все новости получат эту категорию (минус AI)
+        skip_classification: Если True, пропускает вызов классификатора
 
     Returns:
         Список добавленных новостей с ID
     """
-
     try:
         feed = feedparser.parse(rss_url)
         added_news = []
         skipped_old = 0
 
         entries = feed.entries[:limit] if limit else feed.entries
+
+        titles_to_check = []
+        entries_data = []
 
         for entry in entries:
             try:
@@ -189,69 +197,159 @@ def parse_rss_and_populate_db(
                 if not title or not content:
                     continue
 
-                classification_text = full_text_cleaned if len(full_text_cleaned) > len(content) else content
-
-                category_str, confidence = classifier.classify(title, classification_text)
-
-                try:
-                    category_enum = NewsCategory[category_str]
-                except KeyError:
-                    category_enum = NewsCategory.SOCIETY
-                    confidence = 0.0
-
-                existing = session.query(News).filter(
-                    News.title == title[:300],
-                    News.source_name == source_name
-                ).first()
-
-                if existing:
-                    continue
-
-                summary = content[:300] if len(content) > 300 else None
-
-                news_item = News(
-                    title=title[:300],
-                    content=content,
-                    summary=summary,
-                    category=category_enum,
-                    category_confidence=confidence,
-                    source_url=source_url[:500] if source_url else None,
-                    source_name=source_name,
-                    total_shown=0,
-                    total_reactions=0,
-                    created_at=published or datetime.utcnow()
-                )
-
-                session.add(news_item)
-                session.flush()
-
-                added_news.append({
-                    'id': news_item.id,
-                    'title': title[:50] + '...' if len(title) > 50 else title,
-                    'source': source_name,
-                    'category': category_str,
-                    'confidence': f"{confidence:.2f}",
-                    'published': published.strftime('%H:%M') if published else 'N/A',
-                    'url': source_url,
-                    'used_full_rss': len(full_text_cleaned) > len(content)
+                titles_to_check.append(title[:300])
+                entries_data.append({
+                    'title': title,
+                    'content': content,
+                    'full_text_cleaned': full_text_cleaned,
+                    'source_url': source_url,
+                    'published': published
                 })
 
             except Exception as e:
                 print(f"⚠️  Ошибка при обработке записи: {str(e)}")
                 continue
 
-        try:
-            session.commit()
-            full_rss_count = sum(1 for item in added_news if item.get('used_full_rss'))
-            print(f"✅ {source_name}: добавлено {len(added_news)} новостей "
-                  f"(полный RSS текст: {full_rss_count}, пропущено старых: {skipped_old})")
-        except Exception as e:
-            session.rollback()
-            print(f"❌ Ошибка при сохранении: {str(e)}")
-            return []
+        existing_titles = set()
+        if titles_to_check:
+            existing_news = session.query(News.title).filter(
+                News.title.in_(titles_to_check),
+                News.source_name == source_name
+            ).all()
+            existing_titles = {title[0] for title in existing_news}
+
+        news_to_insert = []
+
+        for entry_data in entries_data:
+            title = entry_data['title']
+            
+            if title[:300] in existing_titles:
+                continue
+
+            content = entry_data['content']
+            full_text_cleaned = entry_data['full_text_cleaned']
+            source_url = entry_data['source_url']
+            published = entry_data['published']
+
+            if fixed_category:
+                category_str = fixed_category
+                confidence = 1.0
+            elif skip_classification:
+                category_str = 'SOCIETY'
+                confidence = 0.5
+            else:
+                if not classifier:
+                    raise ValueError("Classifier required when fixed_category is not set")
+                
+                classification_text = full_text_cleaned if len(full_text_cleaned) > len(content) else content
+                category_str, confidence = classifier.classify(title, classification_text)
+
+            # Преобразуем в enum
+            try:
+                category_enum = NewsCategory[category_str]
+            except KeyError:
+                category_enum = NewsCategory.SOCIETY
+                confidence = 0.0
+
+            summary = content[:300] if len(content) > 300 else None
+
+            # Подготавливаем словарь для bulk_insert_mappings
+            news_to_insert.append({
+                'title': title[:300],
+                'content': content,
+                'summary': summary,
+                'category': category_enum,
+                'category_confidence': confidence,
+                'source_url': source_url[:500] if source_url else None,
+                'source_name': source_name,
+                'total_shown': 0,
+                'total_reactions': 0,
+                'created_at': published or datetime.utcnow()
+            })
+
+            added_news.append({
+                'title': title[:50] + '...' if len(title) > 50 else title,
+                'source': source_name,
+                'category': category_str,
+                'confidence': f"{confidence:.2f}",
+                'published': published.strftime('%H:%M') if published else 'N/A',
+                'url': source_url,
+                'used_full_rss': len(full_text_cleaned) > len(content),
+                'used_fixed_category': bool(fixed_category)
+            })
+
+        # Батчевая вставка всех новостей
+        if news_to_insert:
+            try:
+                session.bulk_insert_mappings(News, news_to_insert)
+                session.commit()
+                
+                full_rss_count = sum(1 for item in added_news if item.get('used_full_rss'))
+                fixed_cat_count = sum(1 for item in added_news if item.get('used_fixed_category'))
+                
+                print(f"✅ {source_name}: добавлено {len(added_news)} новостей "
+                      f"(полный RSS: {full_rss_count}, фикс. категория: {fixed_cat_count}, "
+                      f"пропущено старых: {skipped_old})")
+            except Exception as e:
+                session.rollback()
+                print(f"❌ Ошибка при сохранении: {str(e)}")
+                return []
+        else:
+            print(f"ℹ️  {source_name}: новых новостей не найдено (пропущено старых: {skipped_old})")
 
         return added_news
 
     except Exception as e:
         print(f"❌ Ошибка при парсинге {rss_url}: {str(e)}")
         return []
+
+
+def parse_multiple_rss_sources(
+    sources: List[Dict],
+    session: Session,
+    News,
+    NewsCategory,
+    classifier: Optional[NewsClassifier] = None,
+    hours_filter: int = 1
+) -> Dict[str, List[Dict]]:
+    """
+    Парсит несколько RSS источников последовательно
+    
+    Args:
+        sources: Список словарей с параметрами источников
+                 Формат: [{"url": "...", "name": "...", "fixed_category": "..." (опционально)}, ...]
+        session: SQLAlchemy session
+        News: ORM модель News
+        NewsCategory: Enum категорий
+        classifier: Объект NewsClassifier
+        hours_filter: Парсить новости за последние N часов
+    
+    Returns:
+        Словарь {source_name: [added_news]}
+    """
+    results = {}
+    
+    for source in sources:
+        url = source.get('url')
+        name = source.get('name')
+        fixed_category = source.get('fixed_category')
+        
+        if not url or not name:
+            print(f"⚠️  Пропущен источник: отсутствует url или name")
+            continue
+        
+        added = parse_rss_and_populate_db(
+            rss_url=url,
+            source_name=name,
+            session=session,
+            News=News,
+            NewsCategory=NewsCategory,
+            classifier=classifier,
+            hours_filter=hours_filter,
+            fixed_category=fixed_category,
+            skip_classification=False
+        )
+        
+        results[name] = added
+    
+    return results

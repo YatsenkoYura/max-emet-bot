@@ -28,6 +28,7 @@ services:
     volumes:
       - .:/app
 
+
   bot:
     build: .
     command: python bot/main.py

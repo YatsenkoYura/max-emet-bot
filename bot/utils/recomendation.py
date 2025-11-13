@@ -1,9 +1,181 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, desc
-from datetime import datetime
+from sqlalchemy import and_, desc
+from datetime import datetime, timedelta
 from typing import List, Optional
 import random
+import math
 from models import *
+
+
+def calculate_news_score(
+    user: User,
+    news: News,
+    user_weights: dict,
+    viewed_ids: set
+) -> float:
+    """
+    Вычисляет скор для одной новости
+    
+    Args:
+        user: Объект пользователя
+        news: Объект новости
+        user_weights: Словарь весов категорий пользователя
+        viewed_ids: Множество ID просмотренных новостей
+    
+    Returns:
+        Скор новости (float)
+    """
+    if news.id in viewed_ids:
+        return -1.0
+    
+    base_score = user_weights.get(news.category, 0.5)
+    
+    confidence_bonus = 0.0
+    if news.category_confidence:
+        confidence_bonus = (news.category_confidence - 0.5) * 0.2
+    
+    popularity_penalty = 0.0
+    if news.total_shown > 0:
+        popularity_penalty = math.log(1 + news.total_shown) * 0.05
+    
+    age_hours = (datetime.utcnow() - news.created_at).total_seconds() / 3600
+    freshness_bonus = max(0, (48 - age_hours) / 48) * 0.15
+    
+    final_score = (
+        base_score + 
+        confidence_bonus - 
+        popularity_penalty + 
+        freshness_bonus
+    )
+    
+    return final_score
+
+
+def precompute_scores_for_user(
+    user: User,
+    session: Session,
+    freshness_hours: int = 72
+) -> None:
+    """
+    Предрассчитывает и сохраняет скоры для всех подходящих новостей для пользователя
+    
+    Args:
+        user: Объект пользователя
+        session: Сессия БД
+        freshness_hours: Рассматривать новости не старше N часов
+    """
+    category_weights_query = session.query(UserCategoryWeight).filter(
+        UserCategoryWeight.user_id == user.id
+    ).all()
+    
+    user_weights = {cw.category: cw.weight for cw in category_weights_query}
+    
+    if not user_weights:
+        user_weights = {cat: 0.5 for cat in NewsCategory}
+    
+    viewed_news_ids = session.query(UserInteraction.news_id).filter(
+        UserInteraction.user_id == user.id,
+        UserInteraction.news_id.isnot(None)
+    ).distinct().all()
+    viewed_ids = {nid[0] for nid in viewed_news_ids}
+    
+    cutoff_time = datetime.utcnow() - timedelta(hours=freshness_hours)
+    
+    query = session.query(News).filter(
+        News.created_at >= cutoff_time
+    )
+    
+    if viewed_ids:
+        query = query.filter(~News.id.in_(viewed_ids))
+    
+    news_list = query.all()
+    
+    session.query(UserNewsScore).filter(
+        UserNewsScore.user_id == user.id
+    ).delete(synchronize_session=False)
+    
+    new_scores = []
+    for news in news_list:
+        score = calculate_news_score(user, news, user_weights, viewed_ids)
+        if score > 0:
+            new_scores.append({
+                'user_id': user.id,
+                'news_id': news.id,
+                'score': score,
+                'calculated_at': datetime.utcnow()
+            })
+    
+    if new_scores:
+        session.bulk_insert_mappings(UserNewsScore, new_scores)
+        session.commit()
+
+
+def get_recommended_news(
+    user: User,
+    n: int,
+    session: Session,
+    diversity_factor: float = 0.2
+) -> List[News]:
+    """
+    Выдаёт N новостей, наиболее подходящих пользователю из предрассчитанных скоров
+    
+    Args:
+        user: Объект пользователя
+        n: Количество новостей для рекомендации
+        session: Сессия БД
+        diversity_factor: Фактор разнообразия (0-1), добавляет случайности
+    
+    Returns:
+        Список рекомендованных новостей
+    """
+    recent_score = session.query(UserNewsScore).filter(
+        UserNewsScore.user_id == user.id,
+        UserNewsScore.calculated_at >= datetime.utcnow() - timedelta(hours=1)
+    ).first()
+    
+    if not recent_score:
+        precompute_scores_for_user(user, session)
+    
+    top_news = session.query(News).join(
+        UserNewsScore,
+        News.id == UserNewsScore.news_id
+    ).filter(
+        UserNewsScore.user_id == user.id
+    ).order_by(
+        UserNewsScore.score.desc()
+    ).limit(n * 2).all()
+    
+    if not top_news:
+        viewed_news_ids = session.query(UserInteraction.news_id).filter(
+            UserInteraction.user_id == user.id,
+            UserInteraction.news_id.isnot(None)
+        ).distinct().all()
+        viewed_ids = [nid[0] for nid in viewed_news_ids]
+        
+        query = session.query(News).order_by(News.created_at.desc())
+        
+        if viewed_ids:
+            query = query.filter(~News.id.in_(viewed_ids))
+        
+        return query.limit(n).all()
+    
+    if diversity_factor > 0 and len(top_news) > n:
+        deterministic_count = int(n * (1 - diversity_factor))
+        random_count = n - deterministic_count
+        
+        selected = top_news[:deterministic_count]
+        remaining = top_news[deterministic_count:]
+        
+        if remaining:
+            selected.extend(random.sample(
+                remaining, 
+                min(random_count, len(remaining))
+            ))
+        
+        return selected[:n]
+    
+    return top_news[:n]
+
 
 def process_user_reaction(
     user: User,
@@ -129,112 +301,6 @@ def process_user_reaction(
     news.total_reactions += 1
     
     session.commit()
-
-
-def get_recommended_news(
-    user: User,
-    n: int,
-    session: Session,
-    diversity_factor: float = 0.2,
-    freshness_hours: int = 72
-) -> List[News]:
-    """
-    Выдаёт N новостей, наиболее подходящих пользователю
     
-    Args:
-        user: Объект пользователя
-        n: Количество новостей для рекомендации
-        session: Сессия БД
-        diversity_factor: Фактор разнообразия (0-1), добавляет случайности
-        freshness_hours: Рассматривать новости не старше N часов
-    
-    Returns:
-        Список рекомендованных новостей
-    """
-    from datetime import timedelta
-    
-    category_weights_query = session.query(UserCategoryWeight).filter(
-        UserCategoryWeight.user_id == user.id
-    ).all()
-    
-    user_weights = {
-        cw.category: cw.weight 
-        for cw in category_weights_query
-    }
-    
-    if not user_weights:
-        user_weights = {cat: 0.5 for cat in NewsCategory}
-    
-    viewed_news_ids = session.query(UserInteraction.news_id).filter(
-        UserInteraction.user_id == user.id,
-        UserInteraction.news_id.isnot(None)
-    ).distinct().all()
-    viewed_ids = [nid[0] for nid in viewed_news_ids]
-    
-    cutoff_time = datetime.utcnow() - timedelta(hours=freshness_hours)
-    
-    query = session.query(News).filter(
-        News.created_at >= cutoff_time
-    )
-    
-    if viewed_ids:
-        query = query.filter(~News.id.in_(viewed_ids))
-    
-    available_news = query.all()
-    
-    if not available_news:
-        query = session.query(News)
-        if viewed_ids:
-            query = query.filter(~News.id.in_(viewed_ids))
-        available_news = query.limit(n * 2).all()
-    
-    if not available_news:
-        return []
-    
-    scored_news = []
-    
-    for news_item in available_news:
-        # Базовый score на основе веса категории
-        base_score = user_weights.get(news_item.category, 0.5)
-        
-        confidence_bonus = 0.0
-        if news_item.category_confidence:
-            confidence_bonus = (news_item.category_confidence - 0.5) * 0.2
-        
-        popularity_penalty = 0.0
-        if news_item.total_shown > 0:
-            import math
-            popularity_penalty = math.log(1 + news_item.total_shown) * 0.05
-        
-        age_hours = (datetime.utcnow() - news_item.created_at).total_seconds() / 3600
-        freshness_bonus = max(0, (48 - age_hours) / 48) * 0.15
-        
-        final_score = (
-            base_score + 
-            confidence_bonus - 
-            popularity_penalty + 
-            freshness_bonus
-        )
-        
-        scored_news.append((news_item, final_score))
-    
-    scored_news.sort(key=lambda x: x[1], reverse=True)
-    
-    top_candidates = scored_news[:n * 2]
-    
-    if diversity_factor > 0 and len(top_candidates) > n:
-        deterministic_count = int(n * (1 - diversity_factor))
-        random_count = n - deterministic_count
-        
-        selected = [item[0] for item in top_candidates[:deterministic_count]]
-        
-        remaining = [item[0] for item in top_candidates[deterministic_count:]]
-        if remaining:
-            selected.extend(random.sample(
-                remaining, 
-                min(random_count, len(remaining))
-            ))
-        
-        return selected[:n]
-    else:
-        return [item[0] for item in scored_news[:n]]
+    if user.stats.total_reactions % 5 == 0:
+        precompute_scores_for_user(user, session)
