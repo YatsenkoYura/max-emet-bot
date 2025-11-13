@@ -1,4 +1,4 @@
-from maxapi import Dispatcher, Bot
+from maxapi import Dispatcher, Bot, Router, F
 from maxapi.types import BotStarted, MessageCallback, MessageCreated
 from maxapi.utils.inline_keyboard import InlineKeyboardBuilder
 from maxapi.types import CallbackButton, Command
@@ -39,9 +39,9 @@ def create_default_category_weights(user_id: int, selected_categories: list = No
 
 
 class RegHandler:
-    def __init__(self, bot: Bot, dp: Dispatcher, db_session: Session):
+    def __init__(self, bot: Bot, db_session: Session):
         self.bot = bot
-        self.dp = dp
+        self.dp = Router()
         self.db_session = db_session
         self.register_handler()
         self.user_add_info = {}
@@ -64,7 +64,7 @@ class RegHandler:
     def register_handler(self):
         self.dp.bot_started()(self.start_reg)
         self.dp.message_callback()(self.handle_callbacks)
-        self.dp.message_created()(self.handle_user_input_age)
+        self.dp.message_created(F.message.body.text.regexp(r'^\d{1,3}$'))(self.handle_user_input_age)
 
 
     async def start_reg(self, event: BotStarted):
@@ -108,7 +108,6 @@ class RegHandler:
             "username": None
         }
         
-        # Начинаем регистрацию
         builder = InlineKeyboardBuilder()
         builder.row(
             CallbackButton(text="👨 Мужчина", payload="m_gender"),
@@ -188,6 +187,7 @@ class RegHandler:
 
     async def handle_user_input_age(self, event: MessageCreated):
         chat_id = event.get_ids()[0]
+        await self.bot.send_message(chat_id, text="AAAAAAAAA")
         
         if user_states.get(chat_id) == 'waiting_for_age':
             user_text = event.message.body.text

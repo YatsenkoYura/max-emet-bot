@@ -4,6 +4,7 @@ aiohttp==3.13.2
 aiosignal==1.4.0
 alembic==1.17.1
 annotated-types==0.7.0
+APScheduler==3.11.1
 attrs==25.4.0
 fasttext-numpy2==0.10.4
 feedparser==6.0.12
@@ -27,4 +28,5 @@ sgmllib3k==1.0.0
 SQLAlchemy==2.0.44
 typing-inspection==0.4.2
 typing_extensions==4.15.0
+tzlocal==5.3.1
 yarl==1.22.0

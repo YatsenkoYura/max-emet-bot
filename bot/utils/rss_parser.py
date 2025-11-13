@@ -47,7 +47,6 @@ class NewsClassifier:
 
     def classify(self, title: str, content: str, k: int = 1) -> Tuple[str, float]:
         """Классифицирует новость"""
-        # Заголовок дважды, так как он важнее
         combined_text = f"{title} {title} {content}"
         processed_text = self.preprocess_text(combined_text)
 
@@ -86,34 +85,22 @@ def extract_full_text_from_rss(entry: dict) -> str:
     Returns:
         Максимально полный текст из RSS
     """
-    # Приоритет полей для извлечения текста:
-    # 1. content (обычно полный текст) - используется в RSS 2.0
-    # 2. summary_detail
-    # 3. description (краткое описание)
-    # 4. summary (самое краткое)
-
     full_text = ""
 
-    # 1. Пробуем content (может содержать полную статью)
     if 'content' in entry and entry.content:
-        # content это список, берем первый элемент
         content_item = entry.content[0]
         if 'value' in content_item:
             full_text = content_item['value']
 
-    # 2. Для RBC: специальное поле rbc_news:full-text
     if not full_text and 'rbc_news_full-text' in entry:
         full_text = entry['rbc_news_full-text']
 
-    # 3. Если не нашли в content, пробуем summary_detail
     if not full_text and hasattr(entry, 'summary_detail'):
         full_text = entry.summary_detail.get('value', '')
 
-    # 4. Если все еще пусто, берем description
     if not full_text and 'description' in entry:
         full_text = entry.description
 
-    # 5. Последний шанс - summary
     if not full_text and 'summary' in entry:
         full_text = entry.summary
 
@@ -139,8 +126,6 @@ def is_recent_news(published_time: Optional[datetime], hours: int = 1) -> bool:
 
     return published_time >= time_threshold
 
-
-# ==================== RSS ПАРСЕР С КЛАССИФИКАЦИЕЙ И ФИЛЬТРАЦИЕЙ ====================
 
 def parse_rss_and_populate_db(
     rss_url: str,
@@ -180,27 +165,22 @@ def parse_rss_and_populate_db(
 
         for entry in entries:
             try:
-                # ============ ИЗВЛЕКАЕМ ДАТУ ПУБЛИКАЦИИ ============
                 published = None
                 if 'published_parsed' in entry and entry.published_parsed:
                     published = datetime(*entry.published_parsed[:6])
                 elif 'updated_parsed' in entry and entry.updated_parsed:
                     published = datetime(*entry.updated_parsed[:6])
 
-                # ============ ФИЛЬТРАЦИЯ ПО ВРЕМЕНИ ============
                 if not is_recent_news(published, hours=hours_filter):
                     skipped_old += 1
                     continue
 
-                # ============ ИЗВЛЕКАЕМ ДАННЫЕ ============
                 title = entry.get('title', '').strip()
                 title = clean_html(title)
 
-                # Обычное краткое описание (для сохранения в БД)
                 description = entry.get('description', '') or entry.get('summary', '')
                 content = clean_html(description)
 
-                # Полный текст из RSS (для классификации)
                 full_text_from_rss = extract_full_text_from_rss(entry)
                 full_text_cleaned = clean_html(full_text_from_rss)
 
@@ -209,8 +189,6 @@ def parse_rss_and_populate_db(
                 if not title or not content:
                     continue
 
-                # ============ КЛАССИФИКАЦИЯ С FASTTEXT ============
-                # Используем полный текст из RSS если он есть, иначе description
                 classification_text = full_text_cleaned if len(full_text_cleaned) > len(content) else content
 
                 category_str, confidence = classifier.classify(title, classification_text)
@@ -221,7 +199,6 @@ def parse_rss_and_populate_db(
                     category_enum = NewsCategory.SOCIETY
                     confidence = 0.0
 
-                # ============ ПРОВЕРКА НА ДУБЛИКАТЫ ============
                 existing = session.query(News).filter(
                     News.title == title[:300],
                     News.source_name == source_name
@@ -230,14 +207,11 @@ def parse_rss_and_populate_db(
                 if existing:
                     continue
 
-                # Создаем summary (из краткого описания)
                 summary = content[:300] if len(content) > 300 else None
 
-                # ============ СОЗДАЕМ ОБЪЕКТ NEWS ============
-                # В БД сохраняем ТОЛЬКО краткое описание
                 news_item = News(
                     title=title[:300],
-                    content=content,  # Краткое описание из description
+                    content=content,
                     summary=summary,
                     category=category_enum,
                     category_confidence=confidence,
@@ -281,58 +255,3 @@ def parse_rss_and_populate_db(
     except Exception as e:
         print(f"❌ Ошибка при парсинге {rss_url}: {str(e)}")
         return []
-
-
-# ==================== ПРИМЕР ИСПОЛЬЗОВАНИЯ ====================
-
-if __name__ == "__main__":
-    print("="*70)
-    print("RSS ПАРСЕР С ИЗВЛЕЧЕНИЕМ ПОЛНОГО ТЕКСТА ИЗ RSS")
-    print("="*70)
-
-    print("""
-ОСОБЕННОСТИ:
-  ✓ Извлекает максимум текста из самого RSS (без парсинга HTML)
-  ✓ Пробует разные поля: content, rbc_news:full-text, summary_detail
-  ✓ В БД сохраняется только краткое описание (content/summary)
-  ✓ Полный текст из RSS используется ТОЛЬКО для классификации
-  ✓ Фильтрация по времени: последний час
-  ✓ НЕТ парсинга HTML - только RSS
-
-ПОЛЯ RSS ДЛЯ ИЗВЛЕЧЕНИЯ (по приоритету):
-  1. <content> - полный текст (RSS 2.0)
-  2. <rbc_news:full-text> - для RBC
-  3. <summary_detail> - расширенное описание
-  4. <description> - краткое описание
-  5. <summary> - самое краткое
-
-ИСПОЛЬЗОВАНИЕ:
-
-from sqlalchemy.orm import sessionmaker
-from your_models import News, NewsCategory
-
-classifier = NewsClassifier("models/news_classifier.bin")
-Session = sessionmaker(bind=engine)
-session = Session()
-
-rss_sources = [
-    {"url": "https://elementy.ru/rss/news/it", "name": "Elementy IT"},
-    {"url": "https://www.cnews.ru/inc/rss/news.xml", "name": "CNews"},
-    {"url": "https://rssexport.rbc.ru/rbcnews/news/30/full.rss", "name": "RBC"},
-    # ... остальные
-]
-
-for source in rss_sources:
-    results = parse_rss_and_populate_db(
-        rss_url=source["url"],
-        source_name=source["name"],
-        session=session,
-        News=News,
-        NewsCategory=NewsCategory,
-        classifier=classifier,
-        hours_filter=1
-    )
-
-ТРЕБОВАНИЯ:
-  • pip install fasttext feedparser
-    """)

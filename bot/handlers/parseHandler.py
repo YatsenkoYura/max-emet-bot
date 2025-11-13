@@ -5,17 +5,11 @@ from models import News, NewsCategory
 from maxapi.types import MessageCreated, Command
 
 class ParseHandler:
-    def __init__(self, bot : Bot, dp : Dispatcher, db_session : Session):
-        self.bot = bot
-        self.dp = dp
+    def __init__(self, db_session : Session):
         self.db_session = db_session
-        self.dp.message_created(Command('parse'))(self.command)
         self.classifier = NewsClassifier("/app/models/fasttext_news_classifier.bin")
-        self.dp.message_created(Command("search"))(self.search)
-        self.dp.message_created(Command("del"))(self.del_all)
 
-    async def command(self, event: MessageCreated):
-        await self.bot.send_message(event.chat.chat_id, text="start parse!")
+    async def command(self):
         rss_sources = [
             {"url": "https://elementy.ru/rss/news/it", "name": "Elementy IT"},
             {"url": "https://www.cnews.ru/inc/rss/news.xml", "name": "CNews"},
@@ -38,11 +32,3 @@ class ParseHandler:
                 classifier=self.classifier,
                 hours_filter=1
             )
-
-
-    async def search(self, event: MessageCreated):
-        news = self.db_session.query(News).first()
-        await self.bot.send_message(event.chat.chat_id, text=f"**{news.title}**\n\n{news.content}\n\n\n{news.source_name}\n{news.source_url}\n\n{news.category}\n{news.category_confidence}")
-
-    async def del_all(self, event: MessageCreated):
-        self.db_session.query(News).delete()
