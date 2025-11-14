@@ -6,6 +6,7 @@ from handlers.regHandler import RegHandler
 from handlers.parseHandler import ParseHandler
 from handlers.NewsHandler import NewsManager
 from utils.recomendation import precompute_scores_for_user
+from sqlalchemy.orm import Session
 import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import functools
@@ -39,6 +40,7 @@ from models import News, NewsCategory
 from sqlalchemy.exc import IntegrityError
 
 def load_news_from_dump(session: Session, filename="news_dump.json"):
+    now = datetime.utcnow()
     with open(filename, "r", encoding="utf-8") as f:
         news_data = json.load(f)
     for item in news_data:
@@ -50,7 +52,7 @@ def load_news_from_dump(session: Session, filename="news_dump.json"):
             category_confidence=item.get("category_confidence"),
             source_url=item.get("source_url"),
             source_name=item.get("source_name"),
-            created_at=item.get("created_at")
+            created_at=now
         )
         session.add(news)
     try:
