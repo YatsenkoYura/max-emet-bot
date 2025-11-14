@@ -6,7 +6,7 @@ from maxapi.bot import ParseMode
 from sqlalchemy.orm import Session
 from models import User, News, ReactionType
 from utils.recomendation import get_recommended_news, process_user_reaction
-from utils.search_news import NewsSearchEngine
+from utils.search_news import NewsSearchEngine, search_news_by_keyword
 from typing import Optional
 import logging
 from datetime import datetime, timedelta
@@ -25,6 +25,7 @@ class NewsManager:
 
     def register_handlers(self):
         self.router.message_created(Command("news"))(self.handle_news_command)
+        self.router.message_created(Command("search"))(self.handle_search_command)
         self.router.message_callback(F.callback.payload == "start_reading")(self.handle_start_reading)
         self.router.message_callback(F.callback.payload == "news_prev")(self.handle_news_prev)
         self.router.message_callback(F.callback.payload == "news_next")(self.handle_news_next)
@@ -345,3 +346,46 @@ class NewsManager:
                 del self.user_news_cache[chat_id]
         except Exception as e:
             logger.error(f"❌ Ошибка реакции: {e}")
+
+    async def handle_search_command(self, event: MessageCreated):
+        await self.bot.send_message(event.chat.chat_id, text="AAAA")
+        chat_id = event.get_ids()[0]
+        user_id = event.message.sender.user_id
+        user = self.db_session.query(User).filter(User.max_id == str(user_id)).first()
+        if not user:
+            await self.bot.send_message(chat_id, text="⚠️ Сначала пройдите регистрацию через /start", parse_mode=ParseMode.MARKDOWN)
+            return
+
+        text = event.message.body.text
+        if not text:
+            await self.bot.send_message(chat_id, text="⚠️ Пожалуйста, укажите текст для поиска. Например:\n/search футбол Россия", parse_mode=ParseMode.MARKDOWN)
+            return
+
+        keyword = text[len("/search"):].strip()
+        if not keyword:
+            await self.bot.send_message(chat_id, text="⚠️ Пожалуйста, укажите текст для поиска после команды.", parse_mode=ParseMode.MARKDOWN)
+            return
+        
+        # Ищем новости по ключевому слову (без фильтра по категории)
+        found_news = search_news_by_keyword(session=self.db_session, keyword=keyword, limit=5)
+
+        if not found_news:
+            await self.bot.send_message(chat_id, text=f"😔 По запросу «{keyword}» новостей не найдено.", parse_mode=ParseMode.MARKDOWN)
+            return
+        
+        # Форматируем и отправляем результаты
+        response_lines = [f"🔎 Результаты поиска по «{keyword}»: "]
+        emoji_map = {
+            "climate": "🌍", "conflicts": "⚔️", "culture": "🎭", "economy": "💰",
+            "gloss": "🙂", "health": "🏥", "politics": "🏛️", "science": "🔬",
+            "society": "👥", "sports": "⚽", "travel": "✈️"
+        }
+        for i, news in enumerate(found_news, 1):
+            emoji = emoji_map.get(news.category.value, "📰")
+            short_title = news.title if len(news.title) <= 60 else news.title[:57] + "..."
+            line = f"{i}. {emoji} *{short_title}*\n🔗 [Читать]({news.source_url})" if news.source_url else f"{i}. {emoji} *{short_title}*"
+            response_lines.append(line)
+        
+        response_text = "\n\n".join(response_lines)
+
+        await self.bot.send_message(chat_id, text=response_text, parse_mode=ParseMode.MARKDOWN)
