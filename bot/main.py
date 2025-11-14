@@ -9,7 +9,9 @@ from utils.recomendation import precompute_scores_for_user
 import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import functools
-from models import User
+from models import User, News
+import json
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,6 +34,32 @@ async def job_wrapper(session):
 
 def job_sync_wrapper(session):
     asyncio.run(job_wrapper(session))
+import json
+from models import News, NewsCategory
+from sqlalchemy.exc import IntegrityError
+
+def load_news_from_dump(session: Session, filename="news_dump.json"):
+    with open(filename, "r", encoding="utf-8") as f:
+        news_data = json.load(f)
+    for item in news_data:
+        news = News(
+            title=item["title"],
+            content=item["content"],
+            summary=item.get("summary"),
+            category=NewsCategory(item["category"]),
+            category_confidence=item.get("category_confidence"),
+            source_url=item.get("source_url"),
+            source_name=item.get("source_name"),
+            created_at=item.get("created_at")
+        )
+        session.add(news)
+    try:
+        session.commit()
+        print(f"Loaded {len(news_data)} news from dump")
+    except IntegrityError:
+        session.rollback()
+        print("Some data already exists, rollback done")
+
 
 async def main():
     """Главная функция запуска бота."""
@@ -68,4 +96,8 @@ async def main():
 
 
 if __name__ == "__main__":
+    session = get_session()
+    news_count = session.query(News).count()
+    if news_count == 0:
+        load_news_from_dump(session)
     asyncio.run(main())
