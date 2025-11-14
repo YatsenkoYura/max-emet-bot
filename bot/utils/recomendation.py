@@ -6,7 +6,6 @@ import random
 import math
 from models import *
 
-
 def calculate_news_score(
     user: User,
     news: News,

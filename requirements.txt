@@ -11,6 +11,7 @@ feedparser==6.0.12
 frozenlist==1.8.0
 greenlet==3.2.4
 idna==3.11
+joblib==1.5.2
 magic-filter==1.0.12
 Mako==1.3.10
 MarkupSafe==3.0.3
@@ -23,9 +24,12 @@ puremagic==1.30
 pybind11==3.0.1
 pydantic==2.12.4
 pydantic_core==2.41.5
+scikit-learn==1.7.2
+scipy==1.16.3
 setuptools==80.9.0
 sgmllib3k==1.0.0
 SQLAlchemy==2.0.44
+threadpoolctl==3.6.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzlocal==5.3.1

@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from utils.rss_parser import NewsClassifier
-
+from utils.rss_parser import parse_multiple_rss_sources
+from models import News, NewsCategory
 class ParseHandler:
     def __init__(self, db_session: Session):
         self.db_session = db_session
@@ -29,15 +30,12 @@ class ParseHandler:
             {"url": "https://rssexport.rbc.ru/rbcnews/news/30/full.rss", "name": "RBC"},
         ]
 
-        for source in rss_sources:
-            results = parse_rss_and_populate_db(
-                rss_url=source["url"],
-                source_name=source["name"],
-                session=self.db_session,
-                News=News,
-                NewsCategory=NewsCategory,
-                classifier=self.classifier,
-                hours_filter=1,
-                fixed_category=source.get("fixed_category"),
-                skip_classification=False
-            )
+        results = parse_multiple_rss_sources(
+                    sources=rss_sources,
+                    session=self.db_session,
+                    News=News,
+                    NewsCategory=NewsCategory,
+                    classifier=self.classifier,
+                    hours_filter=1
+                )
+

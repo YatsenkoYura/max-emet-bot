@@ -8,6 +8,8 @@ from handlers.NewsHandler import NewsManager
 from utils.recomendation import precompute_scores_for_user
 import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import functools
+from models import User
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,11 +21,17 @@ async def recompute_all_users_weights(db_session):
     try:
         users = db_session.query(User).all()
         for user in users:
-            precompute_scores_for_user(user, db_session)
-        logger.info("✅ Перерасчёт весов завершён")
+            await asyncio.to_thread(precompute_scores_for_user, user, db_session)
+        logger.info("Перерасчёт весов завершён")
     except Exception as e:
-        logger.error(f"❌ Ошибка при перерасчёте весов: {e}")
+        logger.error(f"Ошибка при перерасчёте весов: {e}")
 
+
+async def job_wrapper(session):
+    await recompute_all_users_weights(session)
+
+def job_sync_wrapper(session):
+    asyncio.run(job_wrapper(session))
 
 async def main():
     """Главная функция запуска бота."""
@@ -31,23 +39,30 @@ async def main():
     dp = Dispatcher()
     session = get_session()
     
-    logger.info("🚀 Регистрация обработчиков...")
+    logger.info("Тренериуем поисковую систему")
+
+    from utils.search_news import NewsSearchEngine
+    search_engine = NewsSearchEngine()
+    search_engine.fit(session)
+
+    logger.info("Регистрация обработчиков...")
     
     reg_handler = RegHandler(bot=bot, db_session=session)
-    news_manager = NewsManager(bot=bot, db_session=session)
+    news_manager = NewsManager(bot=bot, db_session=session, search_engine=search_engine)
     
     dp.include_routers(news_manager.router)
     dp.include_routers(reg_handler.dp)
     
-    logger.info("✅ Роутеры подключены")
+    logger.info("Роутеры подключены")
     
     parse_handler = ParseHandler(session)
     scheduler = AsyncIOScheduler()
     
     scheduler.add_job(parse_handler.command, 'interval', minutes=10)
-    
-    scheduler.add_job(lambda: asyncio.create_task(recompute_all_users_weights(session)), 'interval', minutes=30)
-    
+
+    scheduler.add_job(functools.partial(job_sync_wrapper, session), 'interval', minutes=10)
+
+
     scheduler.start()
     await dp.start_polling(bot)
 
