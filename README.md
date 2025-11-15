@@ -12,9 +12,9 @@ git lfs install
 
 Клонировать репозиторий:
 ```bash
-git clone https://github.com/YatsenkoYura/max-emet-bot
+GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/YatsenkoYura/max-emet-bot
 cd max-emet-bot
-git lfs pull
+curl -L -o models/fasttext_news_classifier.bin https://huggingface.co/data-silence/fasttext-rus-news-classifier/resolve/main/fasttext_news_classifier.bin
 ```
 если есть ограничения гита на скачивание лфс, то нужно в models c заменой закинуть этот файл:
 https://huggingface.co/data-silence/fasttext-rus-news-classifier/blob/main/fasttext_news_classifier.bin
@@ -23,7 +23,7 @@ https://huggingface.co/data-silence/fasttext-rus-news-classifier/blob/main/fastt
 cp .env.example .env
 nano .env
 ```
-Вставьте в поля POSTGRES_PASSWORD свой пароль для бд. и на место TOKEN свой.
+Вставьте в поля POSTGRES_PASSWORD свой пароль для бд. и на место TOKEN свой. Сохраните и выйдете.
 Дальше все просто
 ```
 docker compose up --build
