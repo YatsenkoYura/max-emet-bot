@@ -18,8 +18,7 @@ GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/YatsenkoYura/max-emet-bot
 cd max-emet-bot
 curl -L -o models/fasttext_news_classifier.bin https://huggingface.co/data-silence/fasttext-rus-news-classifier/resolve/main/fasttext_news_classifier.bin
 ```
-если есть ограничения гита на скачивание лфс, то нужно в models c заменой закинуть этот файл:
-https://huggingface.co/data-silence/fasttext-rus-news-classifier/blob/main/fasttext_news_classifier.bin
+вообще модель есть на гите. Но у гита есть ограничение! так что надежнее скачать по wget как в гайде установки! но оно есть тут!
 ### Дальше нужно сделать копию .env.example и назвать ее .env
 ```
 cp .env.example .env
