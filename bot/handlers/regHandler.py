@@ -5,7 +5,7 @@ from maxapi.types import CallbackButton, Command
 from sqlalchemy.orm import Session
 from models import User, UserStats, NewsCategory, UserCategoryWeight, News
 from datetime import datetime
-
+from maxapi.bot import ParseMode
 user_states = {}
 
 
@@ -17,7 +17,6 @@ def create_default_category_weights(user_id: int, selected_categories: list = No
     weights = []
     
     for category in NewsCategory:
-        # Если пользователь выбрал категорию, ставим вес выше
         if selected_categories and category.value in selected_categories:
             initial_weight = 0.8
         else:
@@ -73,21 +72,16 @@ class RegHandler:
         user_id = event.user.user_id
         
         try:
-            # Проверяем, есть ли уже пользователь в БД
             existing_user = self.db_session.query(User).filter(
                 User.max_id == str(user_id)
             ).first()
             
             if existing_user:
-                print(f"🗑️ Найден существующий пользователь {user_id}, удаляем...")
                 
-                # Удаляем старого пользователя со всеми данными
                 self.db_session.delete(existing_user)
                 self.db_session.commit()
                 
-                print(f"✅ Старый профиль удален, начинаем с нуля")
             
-            # Очищаем временные данные если остались
             if chat_id in self.user_add_info:
                 del self.user_add_info[chat_id]
             if chat_id in user_states:
@@ -99,7 +93,6 @@ class RegHandler:
             import traceback
             traceback.print_exc()
         
-        # Инициализируем данные для нового пользователя
         self.user_add_info[chat_id] = {
             "age": None,
             "gender": None,
@@ -117,8 +110,8 @@ class RegHandler:
         await self.bot.send_message(
             chat_id=chat_id,
             text=(
-                "Привет! Прежде чем перейти к использованию, "
-                "пройдите простую регистрацию.\n\nВыберите свой пол:"
+                "Привет!👋\nЭто Emet бот - бот эффективного показа новостей. Наша цель показывать новости из достоверных источников в умеренно безопасном количестве и в удобном виде!🤗\n"
+                "Но прежде чем перейти к использованию, пройдите простую регистрацию.\n\nВыберите свой пол:"
             ),
             attachments=[builder.as_markup()]
         )
@@ -176,7 +169,8 @@ class RegHandler:
                 await self.save_user_to_db(chat_id)
                 await self.bot.send_message(
                     chat_id,
-                    text="✅ Регистрация завершена! Начинаем подбирать новости для вас..."
+                    text="✅ Регистрация завершена!\nКасательно основных функций:\n/news - показ новостей\nВы сможете просмотреть новости, найти похожие, оценить нравятся они вам или нет эти категории и наш алгоритм подберет вам ленту в следующий раз еще лучше!\n\nТак же если вас интересует конкретная новость:\n/search *слова* - поиск новостей по ключевым словам!\nПомогает найти новые интересные тематики новостей если заинтересовала новая тема!\n\nПриятного использования!",
+                    parse_mode=ParseMode.MARKDOWN
                 )
             else:
                 await self.bot.send_message(
@@ -187,8 +181,6 @@ class RegHandler:
 
     async def handle_user_input_age(self, event: MessageCreated):
         chat_id = event.get_ids()[0]
-        await self.bot.send_message(chat_id, text="AAAAAAAAA")
-        
         if user_states.get(chat_id) == 'waiting_for_age':
             user_text = event.message.body.text
             
@@ -258,7 +250,6 @@ class RegHandler:
         user_info = self.user_add_info[chat_id]
         
         try:
-            # Создаем пользователя (он всегда новый, старый удален в start_reg)
             new_user = User(
                 max_id=str(user_info["max_id"]),
                 username=user_info["username"],
@@ -269,9 +260,8 @@ class RegHandler:
             )
             
             self.db_session.add(new_user)
-            self.db_session.flush()  # Получаем ID
+            self.db_session.flush()
             
-            # Создаем веса категорий
             category_weights = create_default_category_weights(
                 user_id=new_user.id,
                 selected_categories=list(user_info["categories"])
@@ -279,7 +269,6 @@ class RegHandler:
             
             self.db_session.add_all(category_weights)
             
-            # Создаем статистику
             user_stats = UserStats(
                 user_id=new_user.id,
                 total_news_shown=0,
@@ -292,14 +281,12 @@ class RegHandler:
             
             print(f"✅ Новый пользователь {new_user.max_id} успешно создан")
             
-            # Очищаем временные данные
             del self.user_add_info[chat_id]
             
             return new_user
             
         except Exception as e:
             self.db_session.rollback()
-            print(f"❌ Ошибка при сохранении пользователя: {e}")
             import traceback
             traceback.print_exc()
             
